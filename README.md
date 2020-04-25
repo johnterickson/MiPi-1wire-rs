@@ -1,0 +1,1 @@
+Inspired by on https://github.com/jheizer/MiPi-1wire
