@@ -1,24 +1,22 @@
-use tokio::io::AsyncReadExt;
-use std::convert::Infallible;
 use std::{error::Error, net::SocketAddr, fs::File, io::{BufRead, BufReader}};
 use hyper::{Body, Request, Response, Server};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Method, StatusCode};
 
 async fn get_temps() -> Result<String,Box<dyn Error>> {
-    let mut body = format!("<a updated='{}'>\n", "2020-04-24 21-28");
+    let mut body = format!("<a updated='{}'>\n", "2020-01-01 00-00");
 
-    let mut file = File::open("/sys/devices/w1_bus_master1/w1_master_slaves")?;
+    let file = File::open("/sys/devices/w1_bus_master1/w1_master_slaves")?;
     for id in BufReader::new(file).lines() {
         let id = id?;
 
         let path = format!("/sys/bus/w1/devices/{}/w1_slave", id);
         let mut lines = BufReader::new(File::open(path)?).lines();
-        lines.next().unwrap()?;
-        let data: &str = &lines.next().unwrap()?;
+        lines.next().ok_or("missing crc line")??;
+        let data: &str = &lines.next().ok_or("missing data line")??;
         let mut tokens = data.split("=");
-        tokens.next().unwrap(); // ignore
-        let temp = i32::from_str_radix(tokens.next().unwrap(), 10)?;
+        tokens.next().ok_or("missing before = token")?;
+        let temp = i32::from_str_radix(tokens.next().ok_or("missing after = token")?, 10)?;
         let temp = temp as f32;
         let temp = temp / 1000.0;
         body += "<owd>\n";
