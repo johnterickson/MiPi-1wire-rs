@@ -22,7 +22,7 @@ async fn get_temps() -> Result<String,Box<dyn Error>> {
         body += "<owd>\n";
         body += "<Name>DS18B20</Name>\n";
         body += &format!("<ROMId>{}</ROMId>\n",id);
-        body += &format!("<Temperature>{}</Temperature>\n",temp);
+        body += &format!("<Temperature>{:.1}</Temperature>\n",temp);
         body += "</owd>\n";
     }
 
