@@ -36,7 +36,7 @@ impl Sensor for RealSensor {
 }
 
 fn get_temps<S: Sensor>(sensor: &S) -> Result<String, AnyError> {
-    let mut body = format!("<a updated='{}'>\n", "2020-01-01 00-00");
+    let mut body = format!("{}","<a>\n");
 
     let ids = sensor.get_ids()?;
     for id in &ids {
