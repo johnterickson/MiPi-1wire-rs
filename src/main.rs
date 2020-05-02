@@ -3,13 +3,25 @@ use hyper::{Body, Request, Response, Server};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Method, StatusCode};
 
-async fn get_temps() -> Result<String,Box<dyn Error>> {
-    let mut body = format!("<a updated='{}'>\n", "2020-01-01 00-00");
+type AnyError = Box<dyn Error>;
+trait Sensor {
+    type Id: std::fmt::Display;
+    fn get_ids(&self) -> Result<Vec<Self::Id>, AnyError>;
+    fn get_celcius(&self, id: &Self::Id) -> Result<f32, AnyError>;
+}
 
-    let file = File::open("/sys/devices/w1_bus_master1/w1_master_slaves")?;
-    for id in BufReader::new(file).lines() {
-        let id = id?;
-
+struct RealSensor {}
+impl Sensor for RealSensor {
+    type Id = String;
+    fn get_ids(&self) -> Result<Vec<Self::Id>, AnyError> {
+        let file = File::open("/sys/devices/w1_bus_master1/w1_master_slaves")?;
+        let mut ids = Vec::new();
+        for id in BufReader::new(file).lines() {
+            ids.push(id?);
+        }
+        Ok(ids)
+    }
+    fn get_celcius(&self, id: &Self ::Id) -> Result<f32, AnyError> { 
         let path = format!("/sys/bus/w1/devices/{}/w1_slave", id);
         let mut lines = BufReader::new(File::open(path)?).lines();
         lines.next().ok_or("missing crc line")??;
@@ -19,10 +31,21 @@ async fn get_temps() -> Result<String,Box<dyn Error>> {
         let temp = i32::from_str_radix(tokens.next().ok_or("missing after = token")?, 10)?;
         let temp = temp as f32;
         let temp = temp / 1000.0;
+        Ok(temp)
+    }
+}
+
+fn get_temps<S: Sensor>(sensor: &S) -> Result<String, AnyError> {
+    let mut body = format!("<a updated='{}'>\n", "2020-01-01 00-00");
+
+    let ids = sensor.get_ids()?;
+    for id in &ids {
+        let temp = sensor.get_celcius(&id)?;
         body += "<owd>\n";
         body += "<Name>DS18B20</Name>\n";
         body += &format!("<ROMId>{}</ROMId>\n",id);
         body += &format!("<Temperature>{:.1}</Temperature>\n",temp);
+        body += &format!("<TemperatureF>{:.1}</TemperatureF>\n",temp*9.0/5.0 + 32.0);
         body += "</owd>\n";
     }
 
@@ -37,7 +60,7 @@ async fn hello_world(req: Request<Body>) -> Result<Response<Body>, hyper::Error>
     let mut response = Response::new(Body::empty());
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/details.xml") => {
-            let body = get_temps().await;
+            let body = get_temps(&RealSensor{});
             let body = match body {
                 Ok(b) => b,
                 Err(e) => {
@@ -71,5 +94,35 @@ async fn main() {
     // Run this server for... forever!
     if let Err(e) = server.await {
         eprintln!("server error: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FakeSensor {}
+
+    impl Sensor for FakeSensor {
+        type Id = String;
+        fn get_ids(&self) -> Result<Vec<Self::Id>, AnyError> { 
+            Ok(vec!["id1".to_owned(), "id2".to_owned(), "id3".to_owned()])
+        }
+        fn get_celcius(&self, id: &Self::Id) -> Result<f32, AnyError> { 
+            match id.as_str() {
+                "id1" => Ok(0.0f32),
+                "id2" => Ok(100.0f32),
+                "id3" => Ok(-40.0f32),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn format_temps() {
+        let s = FakeSensor{};
+        assert_eq!(
+            "<a updated=\'2020-01-01 00-00\'>\n<owd>\n<Name>DS18B20</Name>\n<ROMId>id1</ROMId>\n<Temperature>0.0</Temperature>\n<TemperatureF>32.0</TemperatureF>\n</owd>\n<owd>\n<Name>DS18B20</Name>\n<ROMId>id2</ROMId>\n<Temperature>100.0</Temperature>\n<TemperatureF>212.0</TemperatureF>\n</owd>\n<owd>\n<Name>DS18B20</Name>\n<ROMId>id3</ROMId>\n<Temperature>-40.0</Temperature>\n<TemperatureF>-40.0</TemperatureF>\n</owd>\n</a>\n",
+            &get_temps(&s).unwrap());
     }
 }
