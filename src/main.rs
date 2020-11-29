@@ -18,7 +18,7 @@ trait Clock {
 struct RealClock {}
 impl Clock for RealClock {
     fn now_local() -> OffsetDateTime {
-        OffsetDateTime::try_now_local().unwrap()
+        OffsetDateTime::now_utc()
     }
 }
 
