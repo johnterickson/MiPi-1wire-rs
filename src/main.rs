@@ -1,5 +1,5 @@
 use std::{error::Error, net::SocketAddr, fs::File, io::{BufRead, BufReader}};
-use hyper::{Body, Request, Response, Server};
+use hyper::{Body, Request, Response, Server, header::{self, HeaderValue}};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Method, StatusCode};
 use time::OffsetDateTime;
@@ -47,6 +47,22 @@ impl Sensor for RealSensor {
     }
 }
 
+struct FakeSensor {}
+impl Sensor for FakeSensor {
+    type Id = String;
+    fn get_ids() -> Result<Vec<Self::Id>, AnyError> { 
+        Ok(vec!["id1".to_owned(), "id2".to_owned(), "id3".to_owned()])
+    }
+    fn get_celcius(id: &Self::Id) -> Result<f32, AnyError> { 
+        match id.as_str() {
+            "id1" => Ok(0.0f32),
+            "id2" => Ok(100.0f32),
+            "id3" => Ok(-40.0f32),
+            _ => unreachable!(),
+        }
+    }
+}
+
 fn get_temps<C: Clock, S: Sensor>() -> Result<String, AnyError> {
     let now = C::now_local().format("%Y-%m-%d %H-%M");
     let mut body = format!("<a updated='{}'>\n", &now);
@@ -69,11 +85,16 @@ fn get_temps<C: Clock, S: Sensor>() -> Result<String, AnyError> {
     Ok(body)
 }
 
-async fn hello_world(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+async fn read_temp(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     let mut response = Response::new(Body::empty());
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/details.xml") => {
-            let body = get_temps::<RealClock,RealSensor>();
+            let test_mode = std::env::var("TEST_MODE").as_ref().map(|s| s.as_str()) == Ok("1");
+            let body = if test_mode {
+                get_temps::<RealClock,FakeSensor>()
+            } else {
+                get_temps::<RealClock,RealSensor>()
+            };
             let body = match body {
                 Ok(b) => b,
                 Err(e) => {
@@ -82,6 +103,7 @@ async fn hello_world(req: Request<Body>) -> Result<Response<Body>, hyper::Error>
                 }
             };
             *response.body_mut() = Body::from(body);
+            response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/xml; charset=utf-8"));
         },
         _ => {
             *response.status_mut() = StatusCode::NOT_FOUND;
@@ -99,7 +121,7 @@ async fn main() {
     // creates one from our `hello_world` function.
     let make_svc = make_service_fn(|_conn| async {
         // service_fn converts our function into a `Service`
-        Ok::<_, hyper::Error>(service_fn(hello_world))
+        Ok::<_, hyper::Error>(service_fn(read_temp))
     });
 
     let server = Server::bind(&addr).serve(make_svc);
@@ -114,22 +136,6 @@ async fn main() {
 mod tests {
     use super::*;
     use time::prelude::*;
-
-    struct FakeSensor {}
-    impl Sensor for FakeSensor {
-        type Id = String;
-        fn get_ids() -> Result<Vec<Self::Id>, AnyError> { 
-            Ok(vec!["id1".to_owned(), "id2".to_owned(), "id3".to_owned()])
-        }
-        fn get_celcius(id: &Self::Id) -> Result<f32, AnyError> { 
-            match id.as_str() {
-                "id1" => Ok(0.0f32),
-                "id2" => Ok(100.0f32),
-                "id3" => Ok(-40.0f32),
-                _ => unreachable!(),
-            }
-        }
-    }
 
     struct FakeClock {}
     impl Clock for FakeClock {
