@@ -40,7 +40,17 @@ impl Sensor for RealSensor {
         let data: &str = &lines.next().ok_or("missing data line")??;
         let mut tokens = data.split("=");
         tokens.next().ok_or("missing before = token")?;
-        let temp = i32::from_str_radix(tokens.next().ok_or("missing after = token")?, 10)?;
+        let raw_temp = i32::from_str_radix(tokens.next().ok_or("missing after = token")?, 10)?;
+
+        // looks like a rasp pi update isn't handling the number of bits correctly...
+        // https://blog.ja-ke.tech/2019/01/21/DS18B20-armbian.html
+        // The sensor is per default set to 12 bit resolution, that is a bit 8 bit integer part and 4 bit fractions
+        
+        let frac_part = raw_temp % 1000;
+
+        let int_part = raw_temp / 1000; // this should only be eight bits but it has more...
+        let int_part = (int_part << 24) >> 24; // normalize the sign bits
+        let temp = 1000 * int_part + frac_part;
         let temp = temp as f32;
         let temp = temp / 1000.0;
         Ok(temp)
